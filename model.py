@@ -5,7 +5,7 @@ class Model:
         This is a seq2seq model.
     """
 
-    def __init__(self, MAX_LEN,vocab_size):
+    def __init__(self, MAX_LEN, vocab_size):
         """
         Initialize a Seq2Seq Model with the given data.
 
@@ -20,9 +20,11 @@ class Model:
         self.encoder_input = tf.placeholder(tf.int32, shape=[None, self.window_size], name='input')
         self.encoder_input_length = tf.placeholder(tf.int32, shape=[None], name='input_length')
 
-        self.decoder_input = tf.placeholder(tf.int32, shape=[None, self.window_size], name='english_input')
+        self.decoder_input = tf.placeholder(tf.int32, shape=[None, (self.window_size - 1)], name='decoder_input')
         self.decoder_input_length = tf.placeholder(tf.int32, shape=[None], name='label_length')
-        self.decoder_labels = tf.placeholder(tf.int32, shape=[None, self.window_size], name='labels')
+        self.decoder_labels = tf.placeholder(tf.int32, shape=[None, (self.window_size - 1)], name='labels')
+        
+        self.keep_prob = tf.placeholder(tf.float32)
 
         # Please leave these variables
         self.logits = self.forward_pass()
@@ -37,31 +39,36 @@ class Model:
         :return: A tensor of size [batch_size, english_window_size, english_vocab_size]
         
         """
-        embedSz = 100
-        rnnSz = 128
+        embedSz = 300
+        rnnSz = 150
         
         with tf.variable_scope("enc"):
             EI = tf.Variable(tf.random_normal([self.vocab_size, embedSz], stddev = .1) )
             embs = tf.nn.embedding_lookup(EI, self.encoder_input)
-            #embs = tf.nn.dropout(embs, keepProb)
+            embs = tf.nn.dropout(embs, self.keep_prob)
             cell = tf.contrib.rnn.GRUCell(rnnSz)
             initState = cell.zero_state(tf.shape(self.encoder_input)[0], tf.float32)
             encOut, encState = tf.nn.dynamic_rnn(cell, embs, self.encoder_input_length, initState)
-            wAT = tf.Variable(tf.random_normal([self.window_size, self.window_size], stddev = .1) )
+            #print(encOut.shape)
+            wAT = tf.Variable(tf.random_normal([self.window_size, self.window_size -1], stddev = .1) )
             encOut = tf.tensordot(encOut, wAT, [[1], [0]])
             encOut = tf.transpose(encOut, [0,2,1])
-            
+            #print(encOut.shape)
             
         with tf.variable_scope("dec"):
             EO = tf.Variable(tf.random_normal([self.vocab_size, embedSz], stddev = .1))
             embs = tf.nn.embedding_lookup(EO, self.decoder_input)
+            embs = tf.nn.dropout(embs, self.keep_prob)
             embb = tf.concat([embs, encOut], axis = 2)
+            #print(embb.shape)
             cell = tf.contrib.rnn.GRUCell(rnnSz)
             decOut, _ = tf.nn.dynamic_rnn(cell, embb, initial_state = encState)
+            #print(decOut.shape)
             
         W = tf.Variable(tf.random_normal([rnnSz, self.vocab_size], stddev = .1) )
         b = tf.Variable(tf.random_normal([self.vocab_size], stddev = .1))
         logits = tf.tensordot(decOut, W, axes = [[2], [0]]) + b
+        #print(logits.shape)
         
         return(logits)
             
@@ -72,7 +79,7 @@ class Model:
 
         :return: the loss of the model as a tensor (averaged over batch)
         """
-        mask = tf.cast(tf.sequence_mask( tf.add(self.decoder_input_length, 1) , self.window_size), tf.float32)
+        mask = tf.cast(tf.sequence_mask( tf.add(self.decoder_input_length, 1) , self.window_size -1), tf.float32)
         loss = tf.contrib.seq2seq.sequence_loss(self.logits, self.decoder_labels, mask)
                                                 
         return(loss)
@@ -91,7 +98,7 @@ class Model:
     def accuract_words(self):
         pred_labels = tf.cast(tf.argmax(self.logits, axis = 2), tf.int32)
         
-        weights = tf.cast(tf.sequence_mask( tf.add(self.decoder_input_length, 1) , self.window_size), tf.float32)
+        weights = tf.cast(tf.sequence_mask( tf.add(self.decoder_input_length, 1) , self.window_size - 1), tf.float32)
         equality = tf.cast(tf.equal(pred_labels, self.decoder_labels), tf.float32)
         bool_mul_weights = tf.multiply(weights, equality)
         acc_words = tf.reduce_sum(bool_mul_weights)

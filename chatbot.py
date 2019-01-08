@@ -1,6 +1,7 @@
+import tensorflow as tf
 from preprocess import *
 from tokenization import *
-import model
+from model import *
 import os
 import numpy as np
 import random
@@ -67,16 +68,23 @@ idx_train = range(thresh_num )
 idx_test = range( thresh_num+1, len(input_tokenized), 1)
 
 train_input = [input_tokenized[i] for i in idx_train]
+train_input_len = [input_len[i] for i in idx_train]
 train_output = [label_tokenized[i] for i in idx_train]
+train_output_len = [label_len[i] for i in idx_train]
+
 test_input = [label_tokenized[i] for i in idx_test]
+test_input_len = [input_len[i] for i in idx_test]
 test_output = [label_tokenized[i] for i in idx_test]
+test_output_len = [label_len[i] for i in idx_test]
 
 # Creates batches. Remember that the Decoder labels need to be shifted over by 1.
 
-dec_input_train = train_output[:, 0: (MAX_LEN + 2 - 1)]
-dec_input = train_output[:, 0: (MAX_LEN + 2 - 1)]
+dec_input_train = np.array(train_output)[:, 0: (MAX_LEN + 2 - 1)]
+dec_input_test =  np.array(test_output)[:, 0: (MAX_LEN + 2 - 1)]
+dec_label_train = np.array(train_output)[:, 1:]
+dec_label_test =  np.array(test_output)[:, 1:]
 
-def create_batches(data, batchSz, windowSz):
+def create_batches(data, batchSz):
     batches = []
     for i in range(len(data)//batchSz):
         batch = data[i*batchSz : (i+1)*batchSz] 
@@ -87,13 +95,66 @@ def create_batches(data, batchSz, windowSz):
 # Set Batch Size
 BATCH_SIZE = 128
 
-train_input_baches = create_batches(train_input, BATCH_SIZE, MAX_LEN + 2)
-train_label_baches = create_batches(train_label, BATCH_SIZE, MAX_LEN + 2)
+train_enc_baches = np.array(create_batches(train_input, BATCH_SIZE))
+train_input_len_baches = np.array(create_batches(train_input_len, BATCH_SIZE))
+train_dec_input_baches = np.array(create_batches(dec_input_train, BATCH_SIZE))
+train_dec_label_baches = np.array(create_batches(dec_label_train, BATCH_SIZE))
+train_output_len_baches = np.array(create_batches(train_output_len, BATCH_SIZE))
 
 # Test batch size set to 1000
-test_input_baches = create_batches(test_input, 1000, MAX_LEN + 2)
-test_label_baches = create_batches(test_label, 1000, MAX_LEN + 2)
+test_enc_baches = create_batches(test_input, 1000)
+test_input_len_baches = create_batches(test_input_len, 1000)
+test_dec_input_baches = create_batches(dec_input_test, 1000)
+test_dec_label_baches = create_batches(dec_label_test, 1000)
+test_output_len_baches = create_batches(test_output_len, 1000)
 
+tf.reset_default_graph()
 
+# Initialize model
+model = Model( MAX_LEN = 10, vocab_size = len(voc.word2index))
 
+sess = tf.InteractiveSession()
+sess.run(tf.global_variables_initializer())
 
+steps = len(train_input)//BATCH_SIZE
+#steps = 20
+EPOC = 20
+for i in range(EPOC):
+    print('Training EPOC %d....'%(i))
+    for step in range(steps):
+        _,loss = sess.run([model.train, model.loss], 
+                                 feed_dict = {model.encoder_input : train_enc_baches[step],
+                                              model.encoder_input_length: train_input_len_baches[step],
+                                              model.decoder_input :train_dec_input_baches[step],
+                                              model.decoder_input_length : train_output_len_baches[step],
+                                              model.decoder_labels : train_dec_label_baches[step],
+                                              model.keep_prob: 0.8}  )
+#    print(loss)
+    
+steps = len(test_input)//1000
+#steps = 20
+total_loss = 0
+total_num_words = 0
+accurate_words = 0
+for step in range(steps):
+    loss, acc_words = sess.run([model.loss, model.accWords],
+                             feed_dict = {model.encoder_input : test_enc_baches[step],
+                                          model.encoder_input_length: test_input_len_baches[step],
+                                          model.decoder_input :test_dec_input_baches[step],
+                                          model.decoder_input_length : test_output_len_baches[step],
+                                          model.decoder_labels : test_dec_label_baches[step],
+                                          model.keep_prob: 1}  )
+    #print(loss)
+    num_words = np.sum(test_output_len[step*1000 : (step+1)*1000]) - 1000
+    batch_loss = loss*num_words
+    total_loss += batch_loss
+    total_num_words += num_words
+    accurate_words += acc_words
+    #print(log.shape)
+    #print(acc.shape)
+    #print(acc)
+    
+    perpl = np.exp(total_loss/total_num_words)
+accuracy = accurate_words / total_num_words
+print(perpl)
+print(accuracy)
